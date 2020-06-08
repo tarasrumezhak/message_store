@@ -10,13 +10,11 @@ from sqlalchemy import Column, Integer, DateTime
 from flask_cors import CORS
 # from models.user import User
 from flask_httpauth import HTTPBasicAuth
+import psycopg2
+import json
+from postgres_config import DB_URL
+
 auth = HTTPBasicAuth()
-
-from flask_login import LoginManager
-
-login_manager = LoginManager()
-
-login_manager.init_app(app)
 
 app = Flask(__name__)
 CORS(app)
@@ -42,7 +40,7 @@ class Order(db.Model):
 
     @property
     def serialize(self):
-        """Return object data in easily serializeable format"""
+        """Return object data in easily serializable format"""
         return {
             'id': self.id,
             'date': self.date,
@@ -59,6 +57,7 @@ class User(db.Model):
     username = db.Column(db.String(32), index=True)
     email = db.Column(db.String(50))
     password_hash = db.Column(db.String(128))
+
     # birthday = db.Column(DateTime)
 
     def hash_password(self, password):
@@ -67,32 +66,21 @@ class User(db.Model):
     def verify_password(self, password):
         return pwd_context.verify(password, self.password_hash)
 
-    def generate_auth_token(self, expiration=600):
-        s = Serializer(app.config['SECRET_KEY'], expires_in=expiration)
-        return s.dumps({'id': self.id})
+    # def generate_auth_token(self, expiration=600):
+    #     s = Serializer(app.config['SECRET_KEY'], expires_in=expiration)
+    #     return s.dumps({'id': self.id})
 
-    @staticmethod
-    def verify_auth_token(token):
-        s = Serializer(app.config['SECRET_KEY'])
-        try:
-            data = s.loads(token)
-        except SignatureExpired:
-            return None  # valid token, but expired
-        except BadSignature:
-            return None  # invalid token
-        user = User.query.get(data['id'])
-        return user
-
-
-# Product Schema
-class ProductSchema(ma.Schema):
-    class Meta:
-        fields = ('id', 'name', 'description', 'price', 'qty')
-
-
-# Init Schema
-product_schema = ProductSchema()
-products_schema = ProductSchema(many=True)
+    # @staticmethod
+    # def verify_auth_token(token):
+    #     s = Serializer(app.config['SECRET_KEY'])
+    #     try:
+    #         data = s.loads(token)
+    #     except SignatureExpired:
+    #         return None  # valid token, but expired
+    #     except BadSignature:
+    #         return None  # invalid token
+    #     user = User.query.get(data['id'])
+    #     return user
 
 
 class OrderSchema(ma.Schema):
@@ -104,23 +92,7 @@ order_schema = OrderSchema()
 orders_schema = OrderSchema(many=True)
 
 
-# Create product
-@app.route('/product', methods=['POST'])
-def add_product():
-    name = request.json['name']
-    description = request.json['description']
-    price = request.json['price']
-    qty = request.json['qty']
-
-    new_product = Product(name, description, price, qty)
-    db.session.add(new_product)
-    db.session.commit()
-
-    return product_schema.jsonify(new_product)
-
-
 @app.route('/order', methods=['POST'])
-@auth.login_required
 def add_order():
     account = request.json['account']
     service = request.json['service']
@@ -134,7 +106,6 @@ def add_order():
 
 
 @app.route('/order', methods=['GET'])
-@auth.login_required
 def get_orders():
     all_orders = Order.query.all()
     # orders = orders_schema.dump(all_orders)
@@ -143,14 +114,11 @@ def get_orders():
     return jsonify([order.serialize for order in all_orders])
 
 
-
-
 @app.route('/order/<id>', methods=['GET'])
 def get_order(id):
     order = Order.query.get(id)
     # return order_schema.jsonify(order)
     return jsonify(order.serialize)
-
 
 
 @app.route('/users', methods=['POST'])
@@ -172,7 +140,6 @@ def new_user():
 
 
 @app.route('/users/<int:id>')
-@auth.login_required
 def get_user(id):
     user = User.query.get(id)
     if not user:
@@ -180,31 +147,62 @@ def get_user(id):
     return jsonify({'username': user.username})
 
 
-# @app.route('/users/auth', methods=['POST'])
-@auth.verify_password
-def verify_password(username_or_token, password):
-    # first try to authenticate by token
-    user = User.verify_auth_token(username_or_token)
-    if not user:
-        # try to authenticate with username/password
-        user = User.query.filter_by(username=username_or_token).first()
-        if not user or not user.verify_password(password):
-            return False
-    g.user = user
-    return True
-
-
-@app.route('/token')
-@auth.login_required
-def get_auth_token():
-    token = g.user.generate_auth_token()
-    return jsonify({'token': token.decode('ascii')})
+# # @app.route('/users/auth', methods=['POST'])
+# @auth.verify_password
+# def verify_password(username_or_token, password):
+#     # first try to authenticate by token
+#     user = User.verify_auth_token(username_or_token)
+#     if not user:
+#         # try to authenticate with username/password
+#         user = User.query.filter_by(username=username_or_token).first()
+#         if not user or not user.verify_password(password):
+#             return False
+#     g.user = user
+#     return True
 
 
 @app.route('/')
-@auth.login_required
 def index():
     return "Hello, {}!".format(auth.current_user())
+
+
+# @app.route('/login', methods=['GET'])
+# def login():
+#     email = request.args.get('email')
+#     password = request.args.get('password')
+#     print(email, password)
+#
+#     conn = psycopg2.connect(DB_URL)
+#     cur = conn.cursor()
+#     # cur.execute("CREATE TABLE test (id serial PRIMARY KEY, num integer, data varchar);")
+#     query = "SELECT password_hash FROM user WHERE email = " + email
+#     cur.execute(query)
+#     pass_hash = cur.fetchall()
+#     result = pwd_context.verify(password, pass_hash)
+#     return jsonify({'rusult': result})
+
+@app.route('/test', methods=['GET'])
+def test():
+    account = request.args.get('account')
+    try:
+        conn = psycopg2.connect(user="postgres",
+                                password="postgres",
+                                host="127.0.0.1",
+                                port="5433",
+                                database="message_store")
+        cur = conn.cursor()
+        query = "SELECT * FROM \"order\" WHERE account = \'{}\'".format(account)
+        cur.execute(query)
+        result = cur.fetchall()
+        return str(result)
+    except (Exception, psycopg2.Error) as error:
+        print("Error while connecting to PostgreSQL", error)
+    finally:
+        # closing database connection.
+        if (conn):
+            cur.close()
+            conn.close()
+            print("PostgreSQL connection is closed")
 
 
 if __name__ == '__main__':
